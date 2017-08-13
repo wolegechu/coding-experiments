@@ -4,7 +4,12 @@ from lang import Lang
 import random
 import codecs
 
+import torch
+from torch.autograd import Variable
+
 MAX_LENGTH = 10
+SOS_token = 0
+EOS_token = 1
 
 def unicode_to_ascii(s):
     '''Turn a Unicode string to plain ASCII
@@ -79,5 +84,19 @@ def prepare_data(lang1, lang2, reverse=False):
     print output_lang.name, output_lang.n_words
     return input_lang, output_lang, pairs
 
-input_lang, ouput_lang, pairs = prepare_data('eng', 'fra', True)
-print random.choice(pairs)
+def indexes_from_sentence(lang, sentence):
+    return [lang.word2index[word] for word in sentence.split(' ')]
+
+def variable_from_sentence(lang, sentence):
+    indexes = indexes_from_sentence(lang, sentence)
+    indexes.append(EOS_token)
+    result = Variable(torch.LongTensor(indexes).view(-1, 1))
+    if use_cuda:
+        return result.cuda()
+    else:
+        return result
+
+def variable_from_pair(input_lang, out_put_lang, pair):
+    input_variable = variable_from_sentence(input_lang, pair[0])
+    target_variable = variable_from_sentence(out_put_lang, pair[1])
+    return (input_variable, target_variable)
