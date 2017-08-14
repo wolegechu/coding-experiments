@@ -3,6 +3,11 @@ import re
 from lang import Lang
 import random
 import codecs
+import time
+import math
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import numpy as np
 
 import torch
 from torch.autograd import Variable
@@ -10,6 +15,9 @@ from torch.autograd import Variable
 MAX_LENGTH = 10
 SOS_token = 0
 EOS_token = 1
+teacher_forcing_ratio = 0.5
+use_cuda = torch.cuda.is_available()
+
 
 def unicode_to_ascii(s):
     '''Turn a Unicode string to plain ASCII
@@ -96,7 +104,26 @@ def variable_from_sentence(lang, sentence):
     else:
         return result
 
-def variable_from_pair(input_lang, out_put_lang, pair):
+def variable_from_pair(input_lang, output_lang, pair):
     input_variable = variable_from_sentence(input_lang, pair[0])
-    target_variable = variable_from_sentence(out_put_lang, pair[1])
+    target_variable = variable_from_sentence(output_lang, pair[1])
     return (input_variable, target_variable)
+
+def as_minutes(s):
+    m = math.floor(s / 60)
+    s -= m * 60
+    return '%dm %ds' % (m, s)
+
+def time_since(since, percent):
+    now = time.time()
+    s = now - since
+    es = s / percent
+    rs = es - s
+    return '%s (- %s)' % (as_minutes(s), as_minutes(rs))
+
+def show_plot(points):
+    plt.figure()
+    fig, ax = plt.subplots()
+    loc = ticker.MultipleLocator(base=0.2)
+    ax.yaxis.set_major_locator(loc)
+    plt.plot(points)
