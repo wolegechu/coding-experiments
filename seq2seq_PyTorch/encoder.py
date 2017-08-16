@@ -1,10 +1,10 @@
 import torch
-import torch.nn as nn
 from torch.autograd import Variable
-from utils import MAX_LENGTH
+from torch import nn
+from utils import use_cuda
 
 class EncoderRNN(nn.Module):
-    def __init__(self, hidden_size, output_size, n_layers=1):
+    def __init__(self, input_size, hidden_size, n_layers=1):
         super(EncoderRNN, self).__init__()
         self.n_layers = n_layers
         self.hidden_size = hidden_size
@@ -26,5 +26,7 @@ class EncoderRNN(nn.Module):
         else:
             return result
 
+
+
 if __name__ == '__main__':
-    encoder = EncoderRNN()
+    EncoderRNN = EncoderRNN()
