@@ -35,7 +35,6 @@ FIND_BALL_ANGULAR_Z = 1
 class mc_detect_ctrl:
 
     def __init__(self):
-        self._N_FRAME = 5
         # init ros node
         rospy.init_node('mc_detect_ctrl', anonymous=False)
 
@@ -86,18 +85,18 @@ class mc_detect_ctrl:
         self.turn_flag = True
         self.yaw = 0
         self.pre_odom = (Point(0.23,0.4,0), 0)
+        # self.pre_odom = (Point(0.28,0.85,0), 0)
         self.map = cv2.imread('/home/momenta/catkin_ws/src/mc_frenta/mc_detect/nodes/map.jpg')
         ## final
-        self.previous_coordinate = previous_coordinate = {'robot': np.array((0.23,0.40)), 'ball': np.array((1.45,0.85)),
-                                                        'enemy_robot': np.array((2.75,1.55))}
-        self.coordinate = previous_coordinate = {'robot': np.array((0.23,0.40)), 'ball': np.array((1.45,0.85)),
-                                               'enemy_robot': np.array((2.75,1.55))}
+        self.previous_coordinate = previous_coordinate={'robot': np.array((0.23,0.4)), 'ball': np.array((1.45,0.85)), 'enemy_robot': np.array((2.75,1.55))}
+        self.coordinate = previous_coordinate={'robot': np.array((0.23,0.4)), 'ball': np.array((1.45,0.85)), 'enemy_robot': np.array((2.75,1.55))}
         self.location = {'contain_ball':0}
 
+        self._N_FRAME = 5
         self.his_loca = []
         self.his_odom = []
         self.his_coordinate = []
-        
+
         self.ctrl()
         
     def imu_sub(self, imu_data):
@@ -118,72 +117,39 @@ class mc_detect_ctrl:
         # save the image for dn
         img_path = '/home/momenta/catkin_ws/src/mc_frenta/mc_detect/nodes/buff.jpg'
         cv2.imwrite(img_path,image)
+        result = dn.detect(self.net, self.meta, bytes(img_path))
+
+        # read the raw image for processing
+        self.location = location_detect(image,result)
+
+        if self.location['contain_ball'] == 0 :
+            self.ready = False
+            self.found = False
+        else:
+            # self.found = True
+            if self.location['ball']['theta'] < 0:
+                self.turn_flag = True
+            else:
+                self.turn_flag = False
 
         odom = self.get_odom()
-        self.previous_coordinate['robot'] = np.array((odom[0].x,odom[0].y))-np.array((self.pre_odom[0].x,self.pre_odom[0].y)) \
-                                            + np.array(self.previous_coordinate['robot'])
+        self.previous_coordinate['robot'] = np.array((odom[0].x,odom[0].y))-np.array((self.pre_odom[0].x,self.pre_odom[0].y)) + np.array(self.previous_coordinate['robot'])
         # self.coordinate = self.previous_coordinate
         self.coordinate = coordinate_calculate(self.location, -self.yaw, self.previous_coordinate)
         self.pre_odom = odom
         self.previous_coordinate = self.coordinate
-
-        if len(self.his_odom) == 0:
-            self.his_odom = [odom for _ in range(self._N_FRAME)]
-        else:
-            del self.his_odom[0]
-            self.his_odom.append(odom)
-
-        if len(self.his_coordinate) == 0:
-            self.his_coordinate = [self.coordinate for _ in range(self._N_FRAME)]
-        else:
-            del self.his_coordinate[0]
-            self.his_coordinate.append(self.coordinate)
         # publish detector
-        result = dn.detect(self.net, self.meta, bytes(img_path))
         self.pub_processed_image(image,result)
-
         # publish map
         self.map_publisher()
-
-
-        # read the raw image for processing
-        self.location = location_detect(image, result)
-
-        if len(self.his_loca) == 0:
-            self.his_loca = [self.location for _ in range(self._N_FRAME)]
-        else:
-            del self.his_loca[0]
-            self.his_loca.append(self.location)
-
-        # 所有帧都没球才标记为没球
-        if self.contain_ball() is False:
-            self.ready = False
-            self.found = False
-        else:
-            theta_lt_zero = [loc['ball']['theta'] > 0 for loc in self.his_loca]
-            if theta_lt_zero.count(True) == 5:
-                # 所有帧的 theta 都大于 0
-                self.turn_flag = False
-            else:
-                self.turn_flag = True
-
-        # if self.location['contain_ball'] == 0 :
-        #     self.ready = False
-        #     self.found = False
-        # else:
-        #     # self.found = True
-        #     if self.location['ball']['theta'] < 0:
-        #         self.turn_flag = True
-        #     else:
-        #         self.turn_flag = False
 
         # print('yaw',self.yaw*57.29578)
         # print('odom.x:%f,odom.y:%f'%(odom[0].x,odom[0].y))
         # print('location',self.location)
         # print('coordinate',self.coordinate)
 
-        self.start = True
-        end = time.time()
+        self.start=True
+        end =time.time()
         # print('running_time:  \n', end - start)
         
     def map_publisher(self):
@@ -276,7 +242,7 @@ class mc_detect_ctrl:
                 # when reach the edge of the right area
                 if self.is_right() and self.ready:
                     print('push ball')
-                    self.push_ball(self.location)
+                    self.push_ball()
                 else:
                     # turn to find the ball
                     # turn flag is last tracking in the ball's position,left or right
@@ -357,11 +323,9 @@ class mc_detect_ctrl:
         aim to the ball and push
         '''
         r = rospy.Rate(10)
-        if self.contain_ball():
-            theta = self.get_his_theta()
-            theta_lt_ten = [abs(t) < 10 for t in theta]
-            # if abs(theta) < 10
-            if True in theta_lt_ten:
+        if self.location['contain_ball']:
+            theta = self.location['ball']['theta']
+            if abs(theta) < 10:
                 print('find the ball at center')
                 move_cmd = Twist()
                 move_cmd.linear.x = 0.22
@@ -371,7 +335,6 @@ class mc_detect_ctrl:
                 move_cmd = Twist()
                 move_cmd.angular.z = (1 if self.turn_flag else -1)*0.1
                 move_cmd.linear.x = 0.22
-                time.sleep(0.2)
                 self.cmd_vel.publish(move_cmd)
         else:
             move_cmd = Twist()
@@ -383,40 +346,36 @@ class mc_detect_ctrl:
     def turn_to_find(self):
         while not self.found:
             r = rospy.Rate(10)
-            if self.contain_ball() is False:
-            # if self.location['contain_ball']==0:
+            if self.location['contain_ball']==0:
                 move_cmd = Twist()
                 move_cmd.angular.z = FIND_BALL_ANGULAR_Z*(1 if self.turn_flag else -1)
                 self.cmd_vel.publish(move_cmd)
             else:
-                # theta = self.location['ball']['theta']
-                his_theta = self.get_his_theta()
-                theta_le_ten = [t < 10 for t in his_theta]
-                if True in theta_le_ten :
+                theta = self.location['ball']['theta']
+
+                if abs(theta) < 10 :
                     self.found = True
                 else:
                     move_cmd = Twist()
-                    move_cmd.angular.z = TURN_BALL_ANGULAR_Z * (1 if self.turn_flag else -1)
+                    move_cmd.angular.z = TURN_BALL_ANGULAR_Z*(1 if self.turn_flag else -1)
                     self.cmd_vel.publish(move_cmd)
             r.sleep()
 
     def reach_ball(self):
-        while (not self.is_right()) and self.found:
+        while (not self.is_right() and self.found):
             r = rospy.Rate(10)
             theta = self.location['ball']['theta']
-
             if theta < 0:
                 self.turn_flag = True
             else:
                 self.turn_flag = False
-
-            if self.get_ball_dist() > 170:
+            if self.location['ball']['dist']>400:
                 move_cmd = Twist()
                 move_cmd.linear.x = 1
                 move_cmd.angular.z = 0.1 if self.turn_flag else -0.1
                 self.cmd_vel.publish(move_cmd)
 
-            elif self.get_ball_dist() < 120:
+            elif self.location['ball']['dist']<300:
                 move_cmd = Twist()
                 move_cmd.linear.x = -1
                 move_cmd.angular.z = 0.1 if self.turn_flag else -0.1
@@ -425,67 +384,16 @@ class mc_detect_ctrl:
                 break
             r.sleep()
 
-    def contain_ball(self, always=False):
-        contain_ball = [loc['contain_ball'] != 0 for loc in self.his_loca]
-        # 所有帧都没球才标记为没球
-        if contain_ball.count(False) == self._N_FRAME:
-            return False
-        else:
-            if always:
-                # 每一帧都检测到了球
-                if contain_ball.count(True) == 5:
-                    return True
-                else:
-                    return False
-            return True
-
-    def get_coor_ball(self):
-        his_ball = [coor['ball'] for coor in self.his_coordinate]
-        his_ball.sort()
-
-        ball = np.zeros(2)
-        ball[0] = sum(his_ball[1:-1][0]) / (self._N_FRAME - 2)
-        ball[1] = sum(his_ball[1:-1][1]) / (self._N_FRAME - 2)
-
-        return ball
-
-    def get_coor_robot(self):
-        his_robot = [coor['robot'] for coor in self.his_coordinate]
-        his_robot.sort()
-
-        robot = np.zeros(2)
-        robot[0] = int(float(sum(his_robot[1:-1][0])) / (self._N_FRAME-2))
-        robot[1] = int(float(sum(his_robot[1:-1][1])) / (self._N_FRAME-2))
-
-        return robot
-
-    def get_his_theta(self):
-        theta = []
-        for i in range(self._N_FRAME):
-            if self.his_loca[i]['contain_ball']:
-                theta.append(self.his_loca[i]['ball']['theta'])
-        return theta
-
-    def get_ball_dist(self):
-        dist = []
-        for i in  range(self._N_FRAME):
-            location = self.his_loca[i]
-            if location['contain_ball']:
-                dist.append(location['ball']['dist'])
-        return int(float(sum(dist)) / len(dist))
-
     def reach_position(self):
         door = np.array((2.6, 0.85))
 
         (goal_x, goal_y, goal_z) = self.cal_aim1(self.coordinate)
+        
 
-        # ball = self.coordinate['ball']
-        # robot = self.coordinate['robot']
-
-        ball = self.get_coor_ball()
-        robot = self.get_coor_robot()
-
-        if robot[0]*(door[1]-ball[1])/(door[0] - ball[0]) + (door[0]*ball[1] - door[0]*door[1])/(door[0] -ball[0])+door[1]-robot[1]>0:
+        ball = self.coordinate['ball']
+        robot = self.coordinate['robot']
+        # if robot[0]*(door[1]-ball[1])/(door[0] - ball[0]) + (door[0]*ball[1] - door[0]*door[1])/(door[0] -ball[0])+door[1]-robot[1]>0:
+        if robot[0]*(door[1]-ball[1])/(door[0] - ball[0]) + (door[0]*ball[1] - door[0]*door[1])/(door[0] -ball[0])+door[1]-robot[1]>0 and :
             turn = True
         else:
             turn = False
@@ -494,32 +402,50 @@ class mc_detect_ctrl:
         # print(rotation)
         r = rospy.Rate(10)
 
-        while not (-0.2<(self.yaw - (rotation+(pi/2 if turn else -pi/2)))<0.2 or  \
-            -0.2+2*pi<(self.yaw - (rotation+(pi/2 if turn else -pi/2)))<0.2+2*pi or\
-            -0.2-2*pi<(self.yaw - (rotation+(pi/2 if turn else -pi/2)))<0.2-2*pi):
-            # print('rotation:',rotation + (pi/2 if turn else -pi/2))
-            # print('yaw',self.yaw)
-            print('rotaion_theta', self.yaw - (rotation+(pi/2 if turn else -pi/2)))
-            move_cmd = Twist()
-            move_cmd.angular.z = 0.6 * (1 if turn else -1)
-            self.cmd_vel.publish(move_cmd)
-            r.sleep()
-
+        # turn 90
+        (position, rotation) = self.get_odom()
+        goal_z = ((rotation +(pi/2 if turn else -pi/2))+pi)%(2*pi)-pi
+        while abs(rotation - goal_z) > 0.05:
+                    (position, rotation) = self.get_odom()
+                    if goal_z >= 0:
+                        if rotation <= goal_z and rotation >= goal_z - pi:
+                            move_cmd.linear.x = 0.00
+                            move_cmd.angular.z = 0.5
+                        else:
+                            move_cmd.linear.x = 0.00
+                            move_cmd.angular.z = -0.5
+                    else:
+                        if rotation <= goal_z + pi and rotation > goal_z:
+                            move_cmd.linear.x = 0.00
+                            move_cmd.angular.z = -0.5
+                        else:
+                            move_cmd.linear.x = 0.00
+                            move_cmd.angular.z = 0.5
+                    self.cmd_vel.publish(move_cmd)
+                    r.sleep()
+        # while not (-0.2<(self.yaw - (rotation+(pi/2 if turn else -pi/2)))<0.2 or  \
+        #     -0.2+2*pi<(self.yaw - (rotation+(pi/2 if turn else -pi/2)))<0.2+2*pi or\
+        #     -0.2-2*pi<(self.yaw - (rotation+(pi/2 if turn else -pi/2)))<0.2-2*pi):
+        #     # print('rotation:',rotation + (pi/2 if turn else -pi/2))
+        #     # print('yaw',self.yaw)
+        #     move_cmd = Twist()
+        #     move_cmd.angular.z = 0.6 * (1 if turn else -1)
+        #     self.cmd_vel.publish(move_cmd)
+        #     r.sleep()
         print('tiny right')
-        # while (not self.tiny_right()) and not (self.contain_ball() and self.location['ball']['is_compeletely_in_vision']):
-        while (not self.tiny_right()) and not (self.contain_ball(always=True)):
-
+        while (not self.tiny_right()) and not (self.location['contain_ball'] and self.location['ball']['is_compeletely_in_vision']):
             move_cmd = Twist()
             move_cmd.linear.x = 0.22
             move_cmd.angular.z = 1.4*(-1 if turn else 1)
             self.cmd_vel.publish(move_cmd)
             r.sleep()
 
+        print('turn to ball')
 
-        print('turn to the ball')
         # turn to the ball
-        goal = cal_aim1(self.coordinate)
-        goal_x, goal_y, goal_z = goal
+        goal = self.cal_aim1(self.coordinate)
+        (position, rotation) = self.get_odom()
+        goal_x,goal_y,goal_z = goal
         while abs(rotation - goal_z) > 0.05:
                     (position, rotation) = self.get_odom()
                     if goal_z >= 0:
@@ -544,22 +470,19 @@ class mc_detect_ctrl:
     def is_right(self):
         door1 = np.array((2.6, 1.2))
         door2 = np.array((2.6, 0.5))
-        #ball = self.coordinate['ball']
-        #robot = self.coordinate['robot']
-
-        ball = self.get_coor_ball()
-        robot = self.get_coor_robot()
-
+        ball = self.coordinate['ball']
+        robot = self.coordinate['robot']
+        ball[0] = ball[0] + 10
         k = tan(self.ktheta)
 
         if ball[0] > door1[0]/2:
             if robot[0]*(door1[1]-ball[1])/(door1[0] - ball[0]) + (door1[0]*ball[1] - door1[0]*door1[1])/(door1[0] -ball[0])+door1[1]-robot[1]<0\
-            and robot[0]*(door2[1]-ball[1])/(door2[0] - ball[0]) + (door2[0]*ball[1] - door2[0]*door2[1])/(door2[0] -ball[0])+door2[1]-robot[1]>0:
+            and robot[0]*(door2[1]-ball[1])/(door2[0] - ball[0]) + (door2[0]*ball[1] - door2[0]*door2[1])/(door2[0] -ball[0])+door2[1]-robot[1]>0 and robot[0] < ball[0]:
                 return True
             else:
                 return False
         else:
-            if robot[1] > k * (robot[0] - ball[0]) + ball[1] and robot[1] < -k * (robot[0] - ball[0]) + ball[1]:
+            if (robot[1] > k * (robot[0] - ball[0]) + ball[1]) and (robot[1] < -k * (robot[0] - ball[0]) + ball[1]) and (robot[0] < ball[0]):
                 return True
             else: 
                 return False
@@ -567,20 +490,17 @@ class mc_detect_ctrl:
     def tiny_right(self):
         door1 = np.array((2.6, 1.2))
         door2 = np.array((2.6, 0.5))
-        # ball = self.coordinate['ball']
-        # robot = self.coordinate['robot']
+        ball = self.coordinate['ball']
+        robot = self.coordinate['robot']
 
-        ball = self.get_coor_ball()
-        robot = self.get_coor_robot()
-
-        k = tan(self.ktheta_tiny)
+        k =  tan(self.ktheta_tiny)
 
         if robot[1] > k * (robot[0] - ball[0]) + ball[1] and robot[1] < -k * (robot[0] - ball[0]) + ball[1]:
             return True
         else: 
             return False
 
-    def cal_aim1(self):
+    def cal_aim1(self,coordinate):
         '''
         calculate the aim1's position 
 
@@ -593,16 +513,16 @@ class mc_detect_ctrl:
         #     odometry = np.array((position.x, position.y))
         #     goal = odometry - coordinate['robot'] + pose
         #     return goal
-        ball = self.get_coor_ball()
         door = np.array((2.7, 0.85))
         odom = self.get_odom()
-        aim = door - (door - ball) * \
-        (np.sqrt((door[0] - ball[0])**2 + (door[1] - ball[1])**2) + 0.1) / \
-        np.sqrt((door[0] - ball[0])**2 + (door[1] - ball[1])**2)
+        aim = door - (door - coordinate['ball']) * \
+        (np.sqrt((door[0] - coordinate['ball'][0])**2 + (door[1] - coordinate['ball'][1])**2) + 0.1) / \
+        np.sqrt((door[0] - coordinate['ball'][0])**2 + (door[1] - coordinate['ball'][1])**2)
         # aim = transform(odom, aim, coordinate)
-        orientation = np.arctan2((door[1]-ball[1]), (door[0] - ball[0]))
+        orientation = np.arctan2((door[1]-coordinate['ball'][1]), (door[0] - coordinate['ball'][0]))
         goal = np.hstack((aim,orientation))
         return goal
+
 
     def get_odom(self):
         '''
@@ -617,6 +537,7 @@ class mc_detect_ctrl:
             return
 
         return (Point(*trans), rotation[2])
+
 
 def main(args):
     '''Initializes and cleanup ros node'''
